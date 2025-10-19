@@ -1,0 +1,137 @@
+import heapq
+import math
+from decimal import Decimal
+
+class Plane:
+    def __init__(self, tank_capacity: int, fuel_consumption: float, cruise_speed: int):
+        self.tank_capacity = tank_capacity
+        self.fuel_consumption = fuel_consumption
+        self.cruise_speed = cruise_speed
+
+
+class Airport:
+    def __init__(self, name: str, lat: float, lon: float, has_fuel: bool):
+        self.name = name
+        self.lat = lat
+        self.lon = lon
+        self.has_fuel = has_fuel
+
+
+class Edge():
+    def __init__(self, distance_km: float, headwind: bool, fairwind: bool, closed: bool):
+        self.distance_km = distance_km
+        self.headwind = headwind
+        self.fairwind = fairwind
+        self.closed = closed
+
+    def weather_factor(self):
+        if self.closed:
+            return None
+        if self.headwind:
+            return 0.80, 1.20
+        if self.fairwind:
+            return 1.10, 0.90
+        else:
+            return 1.00, 1.00
+
+
+class Graph:
+    def __init__(self, plane: Plane):
+        self.plane = plane
+        self.airports = {} #name -> Airport
+        self.edges = {} #name -> []
+
+    def add_airport(self, name, lat, lon, has_fuel):
+        self.airports[name] = Airport(name, lat, lon, has_fuel)
+        self.edges[name] = []
+
+    def add_edge(self, from_airport_name, to_airport_name, distance_km, headwind, fairwind, closed):
+        self.edges[from_airport_name].append((to_airport_name, Edge(distance_km, headwind, fairwind, closed)))
+        self.edges[to_airport_name].append((from_airport_name, Edge(distance_km, headwind, fairwind, closed)))
+
+    def heuristic(self, from_airport_name, to_airport_name):
+        R = 6371 
+        from_lat = math.radians(self.airports[from_airport_name].lat)
+        from_lon = math.radians(self.airports[from_airport_name].lon)
+        to_lat = math.radians(self.airports[to_airport_name].lat)
+        to_lon = math.radians(self.airports[to_airport_name].lon)
+        delta_lat = to_lat - from_lat
+        delta_lon = to_lon - from_lon
+
+        a = math.sin(delta_lat / 2)**2 + math.cos(from_lat) * math.cos(to_lat) * math.sin(delta_lon / 2)**2
+        c = 2 * math.asin(math.sqrt(a))
+
+        return R * c
+      
+    def a_star(self, start_airport, finish_airport):
+        queue = [(0, start_airport, Decimal(self.plane.tank_capacity))]
+        route = {}
+        times = {name: Decimal("inf") for name in self.airports}
+        times[start_airport] = Decimal("0.0")
+        h_times = {name: Decimal("inf") for name in self.airports}
+        h_times[start_airport] = self.heuristic(start_airport, finish_airport)
+        while queue:
+            h_current, current_airport, fuel_left = heapq.heappop(queue)
+
+            if current_airport == finish_airport:
+                path = self.__reconstruct(route, finish_airport)
+                print("Маршрут:")
+                for i in range(len(path) - 1):
+                    print(f"{path[i]} -> {path[i + 1]}")
+                print(f"\nИтого: {float(times[finish_airport]):.2f} ч")
+                return  path, float(times[finish_airport])
+            
+            for neighbour, edge in self.edges[current_airport]:
+                if edge.closed:
+                    continue
+
+                speed_factor, fuel_factor = edge.weather_factor()
+                effective_speed = Decimal(self.plane.cruise_speed * speed_factor)
+                effective_fuel_consumption = Decimal(self.plane.fuel_consumption * fuel_factor)
+
+                needed_fuel = Decimal(edge.distance_km) * effective_fuel_consumption
+                if fuel_left < needed_fuel:
+                    continue
+
+                flight_time = Decimal(edge.distance_km) / effective_speed
+                new_time = times[current_airport] + flight_time
+                remaining_fuel = fuel_left - needed_fuel
+
+                if self.airports[neighbour].has_fuel and remaining_fuel < Decimal(self.plane.tank_capacity) * Decimal("0.25"):
+                    remaining_fuel = Decimal(self.plane.tank_capacity)
+                    new_time += Decimal("0.5")
+                    print(f"[Refuel {neighbour}] : +0.5 ч")
+
+            if new_time < times[neighbour]:
+                route[neighbour] = current_airport
+                times[neighbour] = new_time
+
+                h_value = Decimal(self.heuristic(neighbour, finish_airport)) / Decimal(self.plane.cruise_speed)
+                new_h_time = new_time + h_value
+                h_times[neighbour] = new_h_time
+
+                heapq.heappush(queue, (float(new_h_time), neighbour, remaining_fuel))
+
+
+        return None, float("inf")
+
+    @staticmethod
+    def __reconstruct(route, finish_airport):
+        path = [finish_airport]
+        current = finish_airport
+        while current in route:
+            current = route[current]
+            path.append(current)
+        path.reverse()
+        return path
+
+
+
+plane = Plane(16000, 2.7, 841)
+earth = Graph(plane)
+earth.add_airport("Moscow", 55.7558, 37.6176, True)
+earth.add_airport("SPB", 59.9343, 30.3351, True)
+earth.add_edge("Moscow", "SPB", 706, False, True, False)
+
+path, time = earth.a_star("Moscow", "SPB")
+print("\nРезультат:", path, f"{time:.2f} ч")
